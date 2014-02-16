@@ -10,6 +10,7 @@ enum DisplaySelection {
 	DS_TOGGLE = 3,
 };
 
+/* This array must match the above enum */
 char *DisplaySelectionString[] = {
 	"Monitor",
 	"HDMI",
@@ -42,12 +43,14 @@ int main(int argc, char *argv[])
 		if (pathArray[path].sourceInfo.modeInfoIdx >= 0
 			&& pathArray[path].sourceInfo.modeInfoIdx < numModeElements) {
 
-			if (pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI) {
+			if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI)
+				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
 				hdmi_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
 					current_selection = DS_HDMI;
 			}
-			else if (pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI) {
+			else if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI)
+				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
 				dvi_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
 					current_selection = DS_MONITOR;
@@ -72,11 +75,21 @@ int main(int argc, char *argv[])
 	if ((input - 1) < (sizeof(DisplaySelectionString) / sizeof(DisplaySelectionString[0]))) {
 		printf("Device to be selected is the %s selection.\n", DisplaySelectionString[input - 1]);
 		if ((DS_MONITOR == input && current_selection == DS_HDMI) || (DS_TOGGLE == input && DS_HDMI == current_selection)) {
-			desiredSettings = pathArray[dvi_idx];
+			if (dvi_idx < MAX_PATH_ELEMENTS)
+				desiredSettings = pathArray[dvi_idx];
+			else {
+				printf("Attempting to switch to DVI, but unable to find config element -- exiting\n");
+				return 4;
+			}
 		}
 		else if ((DS_HDMI == input && current_selection == DS_MONITOR) || (DS_TOGGLE == input && DS_MONITOR == current_selection))
 		{
-			desiredSettings = pathArray[hdmi_idx];
+			if (hdmi_idx < MAX_PATH_ELEMENTS)
+				desiredSettings = pathArray[hdmi_idx];
+			else {
+				printf("Attempting to switch to HDMI, but unable to find config element -- exiting\n");
+				return 5;
+			}
 		}
 		else
 		{
