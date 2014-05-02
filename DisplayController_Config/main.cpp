@@ -17,8 +17,8 @@ char *DisplaySelectionString[] = {
 	"Toggle",
 };
 
-#define MAX_PATH_ELEMENTS 10
-#define MAX_MODE_ELEMENTS 10
+#define MAX_PATH_ELEMENTS 128
+#define MAX_MODE_ELEMENTS 8
 
 int main(int argc, char *argv[])
 {
