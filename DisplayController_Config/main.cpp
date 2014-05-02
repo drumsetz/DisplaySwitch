@@ -35,6 +35,8 @@ int main(int argc, char *argv[])
 
 	if (ERROR_SUCCESS != retval) {
 		printf("Query failure - unable to set new path!!\n");
+		if (ERROR_INSUFFICIENT_BUFFER == retval)
+			printf("Insufficient buffer failure; increase MAX_PATH_ELEMENTS or MAX_MODE_ELEMENTS and re-compile.");
 		return 2;
 	}
 
