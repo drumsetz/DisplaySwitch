@@ -7,15 +7,45 @@ using namespace std;
 enum DisplaySelection {
 	DS_MONITOR = 1,
 	DS_HDMI = 2,
-	DS_TOGGLE = 3,
+	DS_BOTH = 3,
+	DS_CYCLE = 4,
 };
 
 /* This array must match the above enum */
-char *DisplaySelectionString[] = {
+const char *DisplaySelectionStrings[] = {
 	"Monitor",
 	"HDMI",
-	"Toggle",
+	"Both",
+	"Cycle",
 };
+static const unsigned int MaxSelectionStrings = sizeof(DisplaySelectionStrings) / sizeof(DisplaySelectionStrings[0]);
+
+#define DS_SELECT_NONE_FLAG 0
+#define DS_SELECT_MONITOR_FLAG 1
+#define DS_SELECT_HDMI_FLAG 2
+typedef unsigned int DisplaySelectionFlags;
+
+/* This array is used to list the order of output combos for the Cycle option.
+   It is also contains the flags for each selection at (DS_* - 1) */
+const DisplaySelectionFlags OptionFlags[] = {
+	DS_SELECT_MONITOR_FLAG,                       /* DVI */
+	DS_SELECT_HDMI_FLAG,                          /* HDMI */
+	DS_SELECT_MONITOR_FLAG | DS_SELECT_HDMI_FLAG, /* Both */
+};
+static const unsigned int MaxOptions = sizeof(OptionFlags) / sizeof(OptionFlags[0]);
+
+static DisplaySelectionFlags GetNextOption(DisplaySelectionFlags current_selection)
+{
+	unsigned int curr_idx = 0;
+	for (curr_idx = 0; curr_idx < MaxOptions; curr_idx++) {
+		if (OptionFlags[curr_idx] == current_selection)
+			break;
+	}
+	if (curr_idx == MaxOptions) {
+		return OptionFlags[0];
+	}
+	return OptionFlags[(curr_idx + 1) % MaxOptions];
+}
 
 #define MAX_PATH_ELEMENTS 128
 #define MAX_MODE_ELEMENTS 8
@@ -29,7 +59,7 @@ int main(int argc, char *argv[])
 	UINT32 numModeElements = sizeof(modeArray)/sizeof(modeArray[0]);
 	UINT32 hdmi_idx = MAX_PATH_ELEMENTS;
 	UINT32 dvi_idx = MAX_PATH_ELEMENTS;
-	DisplaySelection current_selection = DS_TOGGLE;
+	DisplaySelectionFlags current_selection = DS_SELECT_NONE_FLAG;
 
 	retval = QueryDisplayConfig(QDC_ALL_PATHS, &numPathElements, pathArray, &numModeElements, modeArray, NULL);
 
@@ -49,24 +79,25 @@ int main(int argc, char *argv[])
 				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
 				hdmi_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
-					current_selection = DS_HDMI;
+					current_selection |= DS_SELECT_HDMI_FLAG;
 			}
 			else if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI)
 				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
 				dvi_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
-					current_selection = DS_MONITOR;
+					current_selection |= DS_SELECT_MONITOR_FLAG;
 			}
 		}
 	}
-	if (current_selection == DS_TOGGLE) {
+	if (current_selection == DS_SELECT_NONE_FLAG) {
 		printf("Unable to determine current video output -- exiting\n");
 		return 3;
 	}
 
-	/* No argument means toggle output */
-	unsigned int input = DS_TOGGLE;
-	DISPLAYCONFIG_PATH_INFO desiredSettings;
+	/* No argument means cycle output */
+	unsigned int input = DS_CYCLE;
+	DISPLAYCONFIG_PATH_INFO desiredSettings[2];
+	unsigned int num_desired_settings = 0;
 
 	/* Try to get the desired output setting */
 	if (argc > 1) {
@@ -74,23 +105,35 @@ int main(int argc, char *argv[])
 	}
 
 	/* input should match the enum above. indexed into the string array as (input - 1) */
-	if ((input - 1) < (sizeof(DisplaySelectionString) / sizeof(DisplaySelectionString[0]))) {
-		printf("Device to be selected is the %s selection.\n", DisplaySelectionString[input - 1]);
-		if ((DS_MONITOR == input && current_selection == DS_HDMI) || (DS_TOGGLE == input && DS_HDMI == current_selection)) {
-			if (dvi_idx < MAX_PATH_ELEMENTS)
-				desiredSettings = pathArray[dvi_idx];
-			else {
-				printf("Attempting to switch to DVI, but unable to find config element -- exiting\n");
-				return 4;
-			}
-		}
-		else if ((DS_HDMI == input && current_selection == DS_MONITOR) || (DS_TOGGLE == input && DS_MONITOR == current_selection))
+	if ((input - 1) < MaxSelectionStrings) {
+		printf("Device to be selected is the %s selection.\n", DisplaySelectionStrings[input - 1]);
+		DisplaySelectionFlags desired_selection;
+		if (DS_CYCLE == input)
+			desired_selection = GetNextOption(current_selection);
+		else
+			desired_selection = OptionFlags[input - 1];
+
+		if (desired_selection != current_selection)
 		{
-			if (hdmi_idx < MAX_PATH_ELEMENTS)
-				desiredSettings = pathArray[hdmi_idx];
-			else {
-				printf("Attempting to switch to HDMI, but unable to find config element -- exiting\n");
-				return 5;
+			/* HDMI will get priority if multiple outputs being attempted */
+			if (desired_selection & DS_SELECT_HDMI_FLAG)
+			{
+				if (hdmi_idx < MAX_PATH_ELEMENTS)
+					desiredSettings[num_desired_settings++] = pathArray[hdmi_idx];
+				else {
+					printf("Attempting to enable HDMI, but unable to find config element -- exiting\n");
+					return 4;
+				}
+
+			}
+			if (desired_selection & DS_SELECT_MONITOR_FLAG)
+			{
+				if (dvi_idx < MAX_PATH_ELEMENTS)
+					desiredSettings[num_desired_settings++] = pathArray[dvi_idx];
+				else {
+					printf("Attempting to enable DVI, but unable to find config element -- exiting\n");
+					return 5;
+				}
 			}
 		}
 		else
@@ -104,23 +147,27 @@ int main(int argc, char *argv[])
 		printf("Unknown display selection: %d\n\n", input);
 		printf("Usage:\n");
 		printf("\tDisplayController_Config.exe [new_output]\n");
-		for (int i = 0; i < sizeof(DisplaySelectionString) / sizeof(DisplaySelectionString[0]); i++) {
-			printf("\t\t%d: %s\n", i + 1, DisplaySelectionString[i]);
+		for (int i = 0; i < MaxSelectionStrings; i++) {
+			printf("\t\t%d: %s\n", i + 1, DisplaySelectionStrings[i]);
 		}
-		printf("\n\tNo parameter means Toggle\n");
+		printf("\n\tNo parameter means Cycle\n");
 		return 1;
 	}
 
 	/* If we get here we will attempt to set the path -- let SetDisplayConfig pick the mode info */
-	desiredSettings.flags = DISPLAYCONFIG_PATH_ACTIVE;
-	desiredSettings.targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-	desiredSettings.sourceInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-	retval = SetDisplayConfig(1, &desiredSettings, 0, NULL, SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_PATH_ORDER_CHANGES);
+	unsigned int setting = 0;
+	for (setting = 0; setting < num_desired_settings; setting++) {
+		desiredSettings[setting].flags = DISPLAYCONFIG_PATH_ACTIVE;
+		desiredSettings[setting].targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+		desiredSettings[setting].sourceInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+	}
+	retval = SetDisplayConfig(num_desired_settings, desiredSettings, 0, NULL,
+							SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_PATH_ORDER_CHANGES);
 
 	if (ERROR_SUCCESS != retval) {
 		printf("Unable to set -- trying again with SetDisplayConfig creating mode info\n");
-		retval = SetDisplayConfig(1, &desiredSettings, 0, NULL, SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_CHANGES |
-													SDC_ALLOW_PATH_ORDER_CHANGES |SDC_USE_SUPPLIED_DISPLAY_CONFIG);
+		retval = SetDisplayConfig(num_desired_settings, desiredSettings, 0, NULL, SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_CHANGES |
+															SDC_ALLOW_PATH_ORDER_CHANGES |SDC_USE_SUPPLIED_DISPLAY_CONFIG);
 		if (ERROR_SUCCESS != retval) {
 			printf("Unable to set the new display config!!\n");
 			return 3;
