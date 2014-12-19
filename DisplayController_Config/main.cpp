@@ -58,7 +58,9 @@ int main(int argc, char *argv[])
 	UINT32 numPathElements = sizeof(pathArray)/sizeof(pathArray[0]);
 	UINT32 numModeElements = sizeof(modeArray)/sizeof(modeArray[0]);
 	UINT32 hdmi_idx = MAX_PATH_ELEMENTS;
-	UINT32 dvi_idx = MAX_PATH_ELEMENTS;
+	/* Assuming that monitor is either DVI or VGA, and that only one is
+	 * connected. Bugs will present if both are connected. */
+	UINT32 monitor_idx = MAX_PATH_ELEMENTS;
 	DisplaySelectionFlags current_selection = DS_SELECT_NONE_FLAG;
 
 	retval = QueryDisplayConfig(QDC_ALL_PATHS, &numPathElements, pathArray, &numModeElements, modeArray, NULL);
@@ -76,17 +78,38 @@ int main(int argc, char *argv[])
 			&& pathArray[path].sourceInfo.modeInfoIdx < numModeElements) {
 
 			if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI)
-				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
+					&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
 				hdmi_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
 					current_selection |= DS_SELECT_HDMI_FLAG;
 			}
+			/* Both DVI and VGA (HD15) are considered the monitor. We're assuming only one is actually connected. */
+			/* An available DVI will take precedence over an available VGA out unless the VGA is currently active. */
+			/* There will be problems if both are available (which should mean plugged in). */
 			else if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI)
-				&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
-				dvi_idx = path;
+					&& (pathArray[path].targetInfo.targetAvailable == TRUE)
+					&& ((DS_SELECT_MONITOR_FLAG & current_selection) == 0)) {
+				if (monitor_idx != MAX_PATH_ELEMENTS)
+					printf("Both VGA and DVI monitor outputs available; This is not properly supported.\n");
+				printf("Monitor set to DVI technology.\n");
+				monitor_idx = path;
 				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags)
 					current_selection |= DS_SELECT_MONITOR_FLAG;
 			}
+			else if ((pathArray[path].targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HD15)
+					&& (pathArray[path].targetInfo.targetAvailable == TRUE)) {
+				if (monitor_idx != MAX_PATH_ELEMENTS)
+					printf("Both VGA and DVI monitor outputs available; This is not properly supported.\n");
+				if (DISPLAYCONFIG_PATH_ACTIVE & pathArray[path].flags) {
+					current_selection |= DS_SELECT_MONITOR_FLAG;
+					printf("Monitor set to VGA technology because it is currently active.\n");
+					monitor_idx = path;
+				} else if (monitor_idx == MAX_PATH_ELEMENTS) {
+					printf("Monitor set to VGA technology.\n");
+					monitor_idx = path;
+				}
+			}
+
 		}
 	}
 	if (current_selection == DS_SELECT_NONE_FLAG) {
@@ -128,10 +151,10 @@ int main(int argc, char *argv[])
 			}
 			if (desired_selection & DS_SELECT_MONITOR_FLAG)
 			{
-				if (dvi_idx < MAX_PATH_ELEMENTS)
-					desiredSettings[num_desired_settings++] = pathArray[dvi_idx];
+				if (monitor_idx < MAX_PATH_ELEMENTS)
+					desiredSettings[num_desired_settings++] = pathArray[monitor_idx];
 				else {
-					printf("Attempting to enable DVI, but unable to find config element -- exiting\n");
+					printf("Attempting to enable MONITOR, but unable to find config element -- exiting\n");
 					return 5;
 				}
 			}
